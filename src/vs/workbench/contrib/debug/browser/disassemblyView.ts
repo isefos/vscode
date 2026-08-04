@@ -792,7 +792,7 @@ class BreakpointRenderer implements ITableRenderer<IDisassembledInstructionEntry
 	}
 }
 
-interface IInstructionColumnTemplateData {
+export interface IInstructionColumnTemplateData {
 	currentElement: { element?: IDisassembledInstructionEntry };
 	// TODO: hover widget?
 	instruction: HTMLElement;
@@ -803,7 +803,7 @@ interface IInstructionColumnTemplateData {
 	disposables: IDisposable[];
 }
 
-class InstructionRenderer extends Disposable implements ITableRenderer<IDisassembledInstructionEntry, IInstructionColumnTemplateData> {
+export class InstructionRenderer extends Disposable implements ITableRenderer<IDisassembledInstructionEntry, IInstructionColumnTemplateData> {
 
 	static readonly TEMPLATE_ID = 'instruction';
 
