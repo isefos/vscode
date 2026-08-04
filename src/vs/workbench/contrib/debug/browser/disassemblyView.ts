@@ -852,60 +852,13 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 	}
 
 	renderElement(element: IDisassembledInstructionEntry, index: number, templateData: IInstructionColumnTemplateData): void {
-		this.renderElementInner(element, index, templateData).catch(onUnexpectedError);
-	}
-
-	private async renderElementInner(element: IDisassembledInstructionEntry, index: number, templateData: IInstructionColumnTemplateData): Promise<void> {
 		templateData.currentElement.element = element;
 		const instruction = element.instruction;
 		templateData.sourcecode.innerText = '';
+
+		// `renderElement` is a synchronous contract: render the instruction before resolving the
+		// source, so a recycled row never keeps the address of the element it was bound to before.
 		const sb = new StringBuilder(1000);
-
-		if (this._disassemblyView.isSourceCodeRender && element.showSourceLocation && instruction.location?.path && instruction.line !== undefined) {
-			const sourceURI = this.getUriFromSource(instruction);
-
-			if (sourceURI) {
-				let textModel: ITextModel | undefined = undefined;
-				const sourceSB = new StringBuilder(10000);
-				let ref: IReference<IResolvedTextEditorModel> | undefined;
-				try {
-					ref = await this.textModelService.createModelReference(sourceURI);
-				} catch (err) {
-					// Not reachable from here, which is routine for a binary built elsewhere.
-					// Traced rather than reported: this runs per row and again on every recycle.
-					this.logService.trace(`Disassembly view could not resolve ${sourceURI.toString()}`, err);
-				}
-				if (templateData.currentElement.element !== element) {
-					ref?.dispose(); // avoid a leak when element went stale during async, #192831
-					return;
-				}
-				if (ref) {
-					textModel = ref.object.textEditorModel;
-					templateData.cellDisposable.push(ref);
-				}
-
-				// templateData could have moved on during async.  Double check if it is still the same source.
-				if (textModel && templateData.currentElement.element === element) {
-					let lineNumber = instruction.line;
-
-					while (lineNumber && lineNumber >= 1 && lineNumber <= textModel.getLineCount()) {
-						const lineContent = textModel.getLineContent(lineNumber);
-						sourceSB.appendString(`  ${lineNumber}: `);
-						sourceSB.appendString(lineContent + '\n');
-
-						if (instruction.endLine && lineNumber < instruction.endLine) {
-							lineNumber++;
-							continue;
-						}
-
-						break;
-					}
-
-					templateData.sourcecode.innerText = sourceSB.build();
-				}
-			}
-		}
-
 		let spacesToAppend = 10;
 
 		if (instruction.address !== '-1') {
@@ -933,6 +886,51 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 		templateData.instruction.innerText = sb.build();
 
 		this.rerenderBackground(templateData.instruction, templateData.sourcecode, element);
+
+		if (this._disassemblyView.isSourceCodeRender && element.showSourceLocation && instruction.location?.path && instruction.line !== undefined) {
+			this.renderSourceCode(element, templateData, instruction.line).catch(onUnexpectedError);
+		}
+	}
+
+	private async renderSourceCode(element: IDisassembledInstructionEntry, templateData: IInstructionColumnTemplateData, line: number): Promise<void> {
+		const instruction = element.instruction;
+		const sourceURI = this.getUriFromSource(instruction);
+
+		let ref: IReference<IResolvedTextEditorModel>;
+		try {
+			ref = await this.textModelService.createModelReference(sourceURI);
+		} catch (err) {
+			// Not reachable from here, which is routine for a binary built elsewhere.
+			// Traced rather than reported: this runs per row and again on every recycle.
+			this.logService.trace(`Disassembly view could not resolve ${sourceURI.toString()}`, err);
+			return;
+		}
+
+		if (templateData.currentElement.element !== element) {
+			ref.dispose(); // avoid a leak when element went stale during async, #192831
+			return;
+		}
+
+		templateData.cellDisposable.push(ref);
+
+		const textModel: ITextModel = ref.object.textEditorModel;
+		const sourceSB = new StringBuilder(10000);
+		let lineNumber = line;
+
+		while (lineNumber >= 1 && lineNumber <= textModel.getLineCount()) {
+			const lineContent = textModel.getLineContent(lineNumber);
+			sourceSB.appendString(`  ${lineNumber}: `);
+			sourceSB.appendString(lineContent + '\n');
+
+			if (instruction.endLine && lineNumber < instruction.endLine) {
+				lineNumber++;
+				continue;
+			}
+
+			break;
+		}
+
+		templateData.sourcecode.innerText = sourceSB.build();
 	}
 
 	disposeElement(element: IDisassembledInstructionEntry, index: number, templateData: IInstructionColumnTemplateData): void {

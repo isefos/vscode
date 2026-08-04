@@ -42,6 +42,12 @@ function renderedAddress(templateData: IInstructionColumnTemplateData): string {
 	return (templateData.instruction.textContent ?? '').trim().split(/\s+/)[0];
 }
 
+function createPendingTextModelService(): ITextModelService {
+	return upcastPartial<ITextModelService>({
+		createModelReference: () => new Promise(() => { /* never settles */ })
+	});
+}
+
 suite('Debug - Disassembly View', () => {
 
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
@@ -86,6 +92,21 @@ suite('Debug - Disassembly View', () => {
 		});
 
 		renderer.disposeElement(entry, 0, templateData);
+		renderer.disposeTemplate(templateData);
+	});
+
+	test('renders the instruction before the source is resolved', () => {
+		const renderer = createRenderer(createPendingTextModelService());
+		const templateData = renderer.renderTemplate($('div'));
+
+		// A row without source information renders synchronously and correctly.
+		renderer.renderElement(createEntry('0x80000f96', '711d', 'c.addi16sp -0x60'), 0, templateData);
+		assert.strictEqual(renderedAddress(templateData), '0x80000f96');
+
+		// The same template is then recycled for a row whose source is still resolving.
+		renderer.renderElement(createEntry('0x80000f98', 'ce86', 'c.swsp x1,0x5C(x2)', { name: 'main.c', path: POSIX_PATH }, 3), 1, templateData);
+		assert.strictEqual(renderedAddress(templateData), '0x80000f98');
+
 		renderer.disposeTemplate(templateData);
 	});
 
