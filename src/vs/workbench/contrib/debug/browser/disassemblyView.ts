@@ -12,7 +12,6 @@ import { Color } from '../../../../base/common/color.js';
 import { onUnexpectedError } from '../../../../base/common/errors.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, IReference, dispose } from '../../../../base/common/lifecycle.js';
-import { isAbsolute } from '../../../../base/common/path.js';
 import { Constants } from '../../../../base/common/uint.js';
 import { URI } from '../../../../base/common/uri.js';
 import { applyFontInfo } from '../../../../editor/browser/config/domFontInfo.js';
@@ -42,7 +41,7 @@ import * as icons from './debugIcons.js';
 import { CONTEXT_LANGUAGE_SUPPORTS_DISASSEMBLE_REQUEST, DISASSEMBLY_VIEW_ID, IDebugConfiguration, IDebugService, IDebugSession, IInstructionBreakpoint, State } from '../common/debug.js';
 import { InstructionBreakpoint } from '../common/debugModel.js';
 import { getUriFromSource } from '../common/debugSource.js';
-import { isUriString, sourcesEqual } from '../common/debugUtils.js';
+import { sourcesEqual } from '../common/debugUtils.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
@@ -1009,17 +1008,8 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 	}
 
 	private getUriFromSource(instruction: DebugProtocol.DisassembledInstruction): URI {
-		// Try to resolve path before consulting the debugSession.
-		const path = instruction.location!.path;
-		if (path && isUriString(path)) {	// path looks like a uri
-			return this.uriService.asCanonicalUri(URI.parse(path));
-		}
-		// assume a filesystem path
-		if (path && isAbsolute(path)) {
-			return this.uriService.asCanonicalUri(URI.file(path));
-		}
-
-		return getUriFromSource(instruction.location!, instruction.location!.path, this._disassemblyView.debugSession!.getId(), this.uriService, this.logService);
+		const location = instruction.location!;
+		return getUriFromSource(location, location.path, this._disassemblyView.debugSession!.getId(), this.uriService, this.logService);
 	}
 
 	private applyFontInfo(element: HTMLElement) {
