@@ -42,6 +42,12 @@ function renderedAddress(templateData: IInstructionColumnTemplateData): string {
 	return (templateData.instruction.textContent ?? '').trim().split(/\s+/)[0];
 }
 
+function renderedSourceLines(templateData: IInstructionColumnTemplateData): string[] {
+	return Array.from(templateData.sourcecode.childNodes)
+		.filter(node => node.nodeType === Node.TEXT_NODE)
+		.map(node => node.textContent ?? '');
+}
+
 function createPendingTextModelService(): ITextModelService {
 	return upcastPartial<ITextModelService>({
 		createModelReference: () => new Promise(() => { /* never settles */ })
@@ -130,8 +136,29 @@ suite('Debug - Disassembly View', () => {
 			source: templateData.sourcecode.textContent,
 		}, {
 			address: '0x80000f98',
-			source: '',
+			source: `  3: ${POSIX_PATH}`,
 		});
+
+		renderer.disposeTemplate(templateData);
+	});
+
+	test('names every line reserved for an unresolvable source range', async () => {
+		const renderer = createRenderer(upcastPartial<ITextModelService>({
+			createModelReference: () => Promise.reject(new Error(`Unable to read file '${POSIX_PATH}'`))
+		}));
+
+		const entry = createEntry('0x80000f98', 'ce86', 'c.swsp x1,0x5C(x2)', { name: 'main.c', path: POSIX_PATH }, 3);
+		entry.instruction.endLine = 5;
+
+		const templateData = renderer.renderTemplate($('div'));
+		renderer.renderElement(entry, 0, templateData);
+		await timeout(0);
+
+		assert.deepStrictEqual(renderedSourceLines(templateData), [
+			`  3: ${POSIX_PATH}`,
+			`  4: ${POSIX_PATH}`,
+			`  5: ${POSIX_PATH}`,
+		]);
 
 		renderer.disposeTemplate(templateData);
 	});

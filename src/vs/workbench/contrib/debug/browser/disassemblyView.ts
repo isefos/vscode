@@ -32,7 +32,7 @@ import { WorkbenchTable } from '../../../../platform/list/browser/listService.js
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
-import { editorBackground } from '../../../../platform/theme/common/colorRegistry.js';
+import { descriptionForeground, editorBackground } from '../../../../platform/theme/common/colorRegistry.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
@@ -815,6 +815,7 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 
 	private _topStackFrameColor: Color | undefined;
 	private _focusedStackFrameColor: Color | undefined;
+	private _unavailableSourceColor: Color | undefined;
 
 	constructor(
 		private readonly _disassemblyView: DisassemblyView,
@@ -828,10 +829,12 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 
 		this._topStackFrameColor = themeService.getColorTheme().getColor(topStackFrameColor);
 		this._focusedStackFrameColor = themeService.getColorTheme().getColor(focusedStackFrameColor);
+		this._unavailableSourceColor = themeService.getColorTheme().getColor(descriptionForeground);
 
 		this._register(themeService.onDidColorThemeChange(e => {
 			this._topStackFrameColor = e.getColor(topStackFrameColor);
 			this._focusedStackFrameColor = e.getColor(focusedStackFrameColor);
+			this._unavailableSourceColor = e.getColor(descriptionForeground);
 		}));
 	}
 
@@ -855,6 +858,7 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 		templateData.currentElement.element = element;
 		const instruction = element.instruction;
 		templateData.sourcecode.innerText = '';
+		templateData.sourcecode.style.color = '';
 
 		// `renderElement` is a synchronous contract: render the instruction before resolving the
 		// source, so a recycled row never keeps the address of the element it was bound to before.
@@ -887,12 +891,13 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 
 		this.rerenderBackground(templateData.instruction, templateData.sourcecode, element);
 
-		if (this._disassemblyView.isSourceCodeRender && element.showSourceLocation && instruction.location?.path && instruction.line !== undefined) {
-			this.renderSourceCode(element, templateData, instruction.line).catch(onUnexpectedError);
+		const path = instruction.location?.path;
+		if (this._disassemblyView.isSourceCodeRender && element.showSourceLocation && path && instruction.line !== undefined) {
+			this.renderSourceCode(element, templateData, path, instruction.line).catch(onUnexpectedError);
 		}
 	}
 
-	private async renderSourceCode(element: IDisassembledInstructionEntry, templateData: IInstructionColumnTemplateData, line: number): Promise<void> {
+	private async renderSourceCode(element: IDisassembledInstructionEntry, templateData: IInstructionColumnTemplateData, path: string, line: number): Promise<void> {
 		const instruction = element.instruction;
 		const sourceURI = this.getUriFromSource(instruction);
 
@@ -903,6 +908,9 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 			// Not reachable from here, which is routine for a binary built elsewhere.
 			// Traced rather than reported: this runs per row and again on every recycle.
 			this.logService.trace(`Disassembly view could not resolve ${sourceURI.toString()}`, err);
+			if (templateData.currentElement.element === element) {
+				this.renderUnavailableSource(templateData, path, line, instruction.endLine);
+			}
 			return;
 		}
 
@@ -930,6 +938,24 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 			break;
 		}
 
+		templateData.sourcecode.innerText = sourceSB.build();
+	}
+
+	/**
+	 * The row height is committed before the source is resolved, so the space stays reserved
+	 * whether or not any content arrives. Name the lines that were meant to fill it: the path is
+	 * often the only clue for finding the file elsewhere.
+	 */
+	private renderUnavailableSource(templateData: IInstructionColumnTemplateData, path: string, line: number, endLine: number | undefined): void {
+		const sourceSB = new StringBuilder(1000);
+
+		// At least one line, matching the height reserved for the row.
+		const lastLine = Math.max(endLine ?? line, line);
+		for (let lineNumber = line; lineNumber <= lastLine; lineNumber++) {
+			sourceSB.appendString(`  ${lineNumber}: ${path}\n`);
+		}
+
+		templateData.sourcecode.style.color = this._unavailableSourceColor?.toString() ?? '';
 		templateData.sourcecode.innerText = sourceSB.build();
 	}
 
