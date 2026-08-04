@@ -8,6 +8,7 @@ import { $ } from '../../../../../base/browser/dom.js';
 import { timeout } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
 import { ImmortalReference } from '../../../../../base/common/lifecycle.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { upcastPartial } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { createBareFontInfoFromRawSettings } from '../../../../../editor/common/config/fontInfoFromSettings.js';
@@ -18,6 +19,7 @@ import { TestThemeService } from '../../../../../platform/theme/test/common/test
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { DisassemblyView, IDisassembledInstructionEntry, IInstructionColumnTemplateData, InstructionRenderer } from '../../browser/disassemblyView.js';
 import { IDebugSession } from '../../common/debug.js';
+import { Source } from '../../common/debugSource.js';
 import { mockUriIdentityService } from './mockDebugModel.js';
 
 const SESSION_ID = 'aDebugSessionId';
@@ -48,9 +50,12 @@ function renderedSourceLines(templateData: IInstructionColumnTemplateData): stri
 		.map(node => node.textContent ?? '');
 }
 
-function createPendingTextModelService(): ITextModelService {
+function createPendingTextModelService(requested?: URI[]): ITextModelService {
 	return upcastPartial<ITextModelService>({
-		createModelReference: () => new Promise(() => { /* never settles */ })
+		createModelReference: (resource: URI) => {
+			requested?.push(resource);
+			return new Promise(() => { /* never settles */ });
+		}
 	});
 }
 
@@ -112,6 +117,35 @@ suite('Debug - Disassembly View', () => {
 		// The same template is then recycled for a row whose source is still resolving.
 		renderer.renderElement(createEntry('0x80000f98', 'ce86', 'c.swsp x1,0x5C(x2)', { name: 'main.c', path: POSIX_PATH }, 3), 1, templateData);
 		assert.strictEqual(renderedAddress(templateData), '0x80000f98');
+
+		renderer.disposeTemplate(templateData);
+	});
+
+	test('resolves a source with a sourceReference the same way the call stack does', () => {
+		const requested: URI[] = [];
+		const renderer = createRenderer(createPendingTextModelService(requested));
+
+		const location: DebugProtocol.Source = { name: 'main.c', path: POSIX_PATH, sourceReference: 1234 };
+		const templateData = renderer.renderTemplate($('div'));
+		renderer.renderElement(createEntry('0x80000f98', 'ce86', 'c.swsp x1,0x5C(x2)', location, 3), 0, templateData);
+
+		const callStackUri = new Source(location, SESSION_ID, mockUriIdentityService, new NullLogService()).uri;
+		assert.deepStrictEqual(requested.map(uri => uri.toString()), [callStackUri.toString()]);
+
+		renderer.disposeTemplate(templateData);
+	});
+
+	// https://github.com/microsoft/vscode/issues/141875
+	test('resolves a path that already carries a remote authority', () => {
+		const requested: URI[] = [];
+		const renderer = createRenderer(createPendingTextModelService(requested));
+
+		const location: DebugProtocol.Source = { name: 'main.c', path: `vscode-remote://remote-authority${POSIX_PATH}` };
+		const templateData = renderer.renderTemplate($('div'));
+		renderer.renderElement(createEntry('0x80000f98', 'ce86', 'c.swsp x1,0x5C(x2)', location, 3), 0, templateData);
+
+		const callStackUri = new Source(location, SESSION_ID, mockUriIdentityService, new NullLogService()).uri;
+		assert.deepStrictEqual(requested.map(uri => uri.toString()), [callStackUri.toString()]);
 
 		renderer.disposeTemplate(templateData);
 	});
