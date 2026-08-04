@@ -9,8 +9,9 @@ import { IListAccessibilityProvider } from '../../../../base/browser/ui/list/lis
 import { ITableContextMenuEvent, ITableRenderer, ITableVirtualDelegate } from '../../../../base/browser/ui/table/table.js';
 import { binarySearch2 } from '../../../../base/common/arrays.js';
 import { Color } from '../../../../base/common/color.js';
+import { onUnexpectedError } from '../../../../base/common/errors.js';
 import { Emitter } from '../../../../base/common/event.js';
-import { Disposable, IDisposable, dispose } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, IReference, dispose } from '../../../../base/common/lifecycle.js';
 import { isAbsolute } from '../../../../base/common/path.js';
 import { Constants } from '../../../../base/common/uint.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -21,7 +22,7 @@ import { createBareFontInfoFromRawSettings } from '../../../../editor/common/con
 import { IRange, Range } from '../../../../editor/common/core/range.js';
 import { StringBuilder } from '../../../../editor/common/core/stringBuilder.js';
 import { ITextModel } from '../../../../editor/common/model.js';
-import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
+import { IResolvedTextEditorModel, ITextModelService } from '../../../../editor/common/services/resolverService.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
@@ -851,7 +852,7 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 	}
 
 	renderElement(element: IDisassembledInstructionEntry, index: number, templateData: IInstructionColumnTemplateData): void {
-		this.renderElementInner(element, index, templateData);
+		this.renderElementInner(element, index, templateData).catch(onUnexpectedError);
 	}
 
 	private async renderElementInner(element: IDisassembledInstructionEntry, index: number, templateData: IInstructionColumnTemplateData): Promise<void> {
@@ -866,13 +867,22 @@ export class InstructionRenderer extends Disposable implements ITableRenderer<ID
 			if (sourceURI) {
 				let textModel: ITextModel | undefined = undefined;
 				const sourceSB = new StringBuilder(10000);
-				const ref = await this.textModelService.createModelReference(sourceURI);
+				let ref: IReference<IResolvedTextEditorModel> | undefined;
+				try {
+					ref = await this.textModelService.createModelReference(sourceURI);
+				} catch (err) {
+					// Not reachable from here, which is routine for a binary built elsewhere.
+					// Traced rather than reported: this runs per row and again on every recycle.
+					this.logService.trace(`Disassembly view could not resolve ${sourceURI.toString()}`, err);
+				}
 				if (templateData.currentElement.element !== element) {
-					ref.dispose(); // avoid a leak when element went stale during async, #192831
+					ref?.dispose(); // avoid a leak when element went stale during async, #192831
 					return;
 				}
-				textModel = ref.object.textEditorModel;
-				templateData.cellDisposable.push(ref);
+				if (ref) {
+					textModel = ref.object.textEditorModel;
+					templateData.cellDisposable.push(ref);
+				}
 
 				// templateData could have moved on during async.  Double check if it is still the same source.
 				if (textModel && templateData.currentElement.element === element) {
